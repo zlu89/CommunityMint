@@ -1,0 +1,487 @@
+-- Copyright (c) 2021 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module User where
+--import Daml.Script
+-- MAIN_TEMPLATE_BEGIN
+import DA.List
+import  DA.Assert
+-- ASSET_BEGIN
+template Asset
+  with
+    issuer : Party
+    owner : Party
+    symbol : Text
+    price : Decimal
+    display: Bool
+    sales : Bool
+    observers : [Party]
+    issueid: Decimal
+    description: Text
+    communitydisplayed: [Text]
+  where
+    signatory issuer,owner
+    ensure price > 0.0
+    
+    observer observers
+-- ASSET_END
+    key (issuer,symbol,issueid):(Party,Text,Decimal) 
+    maintainer key._1
+    controller owner can
+{-       Merge
+        : ContractId Asset
+        with
+          otherCid : ContractId Asset
+        do
+          other <- fetch otherCid
+          assertMsg
+            "Merge failed: issuer does not match"
+            (issuer == other.issuer)
+          assertMsg
+            "Merge failed: owner does not match"
+            (owner == other.owner)
+          assertMsg
+            "Merge failed: symbol does not match"
+            (symbol == other.symbol)
+          archive otherCid
+          create this with
+            price = price + other.price -}
+-- MERGE_SPLIT_END
+
+      ProposeTransfer
+        : ContractId TransferProposal
+        with
+          newOwner : Party
+        do
+          create TransferProposal with
+            asset = this
+            newOwner
+            price=0.1
+            processstate="offered"
+      SetObservers
+        : ContractId Asset
+        with
+          newObservers : [Party]
+        do
+          create this with
+            observers = newObservers
+
+
+template TransferProposal
+  with
+    asset : Asset
+    newOwner : Party
+    price: Decimal
+    processstate: Text
+  where
+    signatory newOwner
+    key ( asset,newOwner,price):(Asset,Party,Decimal) 
+    maintainer key._2
+    controller asset.issuer, newOwner can
+      TransferProposal_Accept
+        : ContractId Asset
+        do
+          create asset with
+            owner = newOwner
+
+    controller asset.owner can
+      TransferProposal_Cancel
+        : ContractId Asset
+        do
+          create asset with
+            observers = []
+
+    controller newOwner can
+      TransferProposal_Reject
+        : ContractId Asset
+        do
+          create asset
+
+template TransferApproval
+  with
+    asset : Asset
+    newOwner : Party
+  where
+    signatory asset.issuer
+
+    controller asset.owner can
+      TransferApproval_Cancel
+        : ()
+        do
+          return ()
+
+    controller newOwner can
+      TransferApproval_Reject
+        : ()
+        do
+          return ()
+
+    controller [asset.owner, newOwner] can
+      TransferApproval_Transfer
+        : ContractId Asset
+        with
+          assetCid : ContractId Asset
+        do
+          sentAsset <- fetch assetCid
+          assertMsg
+            "Transfer failed: Assets do not match."
+            (asset == sentAsset with
+              observers = asset.observers
+            )
+          archive assetCid
+          create asset with
+            owner = newOwner
+            observers = []
+
+
+
+
+
+template DisplayUser with
+    displayUsername: Party
+    displayFollowing: [Party]
+    displayFollowers: [Party]
+  where
+    signatory displayUsername
+    observer displayFollowing
+  
+-- MAIN_TEMPLATE_END
+
+    key displayUsername: Party
+    maintainer key
+
+    -- FOLLOW_BEGIN
+    --nonconsuming choice AutoFollow: ContractId DisplayUser with
+    --    userToFollow: Party
+    --    
+    --  controller username
+    --  do
+    --    assertMsg "You cannot follow yourself" (userToFollow /= username)
+    --    assertMsg "You cannot follow the same user twice" (notElem userToFollow following)
+    --    archive self
+    --    create this with following = userToFollow :: following
+
+template Community with
+    issuer: Party
+    name: Text
+    following: [Party]
+    password: Text
+  where
+    signatory issuer
+    observer following
+-- MAIN_TEMPLATE_END
+    key (issuer,name):( Party,Text)
+    maintainer key._1
+-- MAIN_TEMPLATE_END
+
+template User with
+    username: Party
+    following: [Party]
+    nftids : [Text]
+    wallet:Decimal
+  where
+    signatory username
+    observer following
+  
+-- MAIN_TEMPLATE_END
+
+    key username: Party
+    maintainer key
+
+    -- FOLLOW_BEGIN
+    nonconsuming choice Follow: ContractId User with
+        userToFollow: Party
+      controller username
+      do
+        assertMsg "You cannot follow yourself" (userToFollow /= username)
+        assertMsg "You cannot follow the same user twice" (notElem userToFollow following)
+        archive self
+        create this with following = userToFollow :: following
+
+    nonconsuming choice DisplayUserAutoFollow: ContractId DisplayUser with
+        --displayUsername will just be hardcoded as "displayUser" and will always be called 
+        displayUsername: Party
+        userToFollow: Party
+      controller displayUsername
+      do
+        --assertMsg "You cannot follow yourself" (userToFollow /= username)
+        --assertMsg "You cannot follow the same user twice" (notElem userToFollow following)
+        --archive self
+        --create this with following = userToFollow :: following
+        --create this with following = userToFollow :: following
+        create DisplayUser with
+                  displayUsername = displayUsername
+                  displayFollowing = [userToFollow]
+                  displayFollowers = [username]
+
+    --nonconsuming choice DisplayUserAutoFollow2: ContractId DisplayUser with
+    --    --displayUsername will just be hardcoded as "displayUser" and will always be called 
+    --    displayUsername: Party
+    --    userToFollow: Party
+    --  controller username
+    --  do
+    --    --assertMsg "You cannot follow yourself" (userToFollow /= username)
+    --    assertMsg "You cannot follow the same user twice" (notElem userToFollow following)
+    --    archive self
+    --    --create this with following = userToFollow :: following
+    --    archive self
+    --    create this with following = userToFollow :: following
+    --    create DisplayUser with
+    --              displayUsername = displayUsername
+    --              displayFollowing = [userToFollow]
+    --              displayFollowers = [username]
+                  
+                  
+
+    nonconsuming choice AddNFT: ContractId User with
+        nftid: Text
+      controller username
+      do
+        archive self
+        create this with nftids = nftid :: nftids
+    nonconsuming choice RemoveNFT: ContractId User with
+        nftid: Text
+      controller username
+      do
+        archive self
+        let newnftlist=delete(nftid)(nftids)
+        create this with nftids = newnftlist
+    nonconsuming choice Mint: ContractId Asset with
+        issuer : Party
+        symbol : Text
+        issueid: Decimal
+        description: Text
+        
+        --observers : [Party]
+      controller issuer
+      do
+        --assertMsg "You cannot follow yourself" (issuer /= username)
+        --assertMsg "You cannot follow yourself" (True)
+        --archive self
+        create Asset with
+          issuer= issuer
+          owner = issuer
+          symbol = symbol
+          price =0.1
+          observers = [issuer] 
+          display=False
+          sales=False
+          issueid=issueid
+          description=description
+          communitydisplayed=[]
+    nonconsuming choice ProposeTransferNFT: ContractId TransferProposal with
+        asset : Asset
+        newOwner : Party
+        price: Decimal
+        --observers : [Party]
+      controller newOwner,asset.owner,asset.issuer
+      do
+        create TransferProposal with
+          asset = asset
+          newOwner = newOwner
+          price=price
+          processstate="offered"
+
+
+    nonconsuming choice AcceptTransferNFT: ContractId TransferProposal with
+        asset : Asset
+        newOwner : Party
+        price: Decimal
+      controller newOwner,asset.owner,asset.issuer
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @TransferProposal (asset,newOwner,price)
+        archive oldRegistrationCid
+        create TransferProposal with
+          asset =asset
+          newOwner = newOwner
+          price=price
+          processstate="Accepted"
+    nonconsuming choice DeclineTransferNFT: ContractId TransferProposal with
+        asset : Asset
+        newOwner : Party
+        price: Decimal
+      controller asset.owner
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @TransferProposal (asset,newOwner,price)
+        archive oldRegistrationCid
+        create TransferProposal with
+          asset = asset
+          newOwner = newOwner
+          price=price
+          processstate="Declined"
+    nonconsuming choice TransferNFT: ContractId Asset  with
+        symbol : Text
+        owner: Party
+        newOwner:Party
+        issuer:Party
+        issueid: Decimal
+        --observers : [Party]
+      controller owner,issuer,newOwner
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Asset (issuer,symbol,issueid)
+
+        archive oldRegistrationCid
+        create Asset with
+         symbol= oldRegistrationData.symbol
+         issuer= oldRegistrationData.issuer
+         owner=newOwner
+         price=oldRegistrationData.price
+         observers=[]
+         display=oldRegistrationData.display
+         sales=oldRegistrationData.sales
+         issueid=oldRegistrationData.issueid
+         description=oldRegistrationData.description
+         communitydisplayed=oldRegistrationData.communitydisplayed
+
+         
+    nonconsuming choice Display: ContractId Asset with
+        symbol : Text
+        owner: Party
+        issuer:Party
+        issueid: Decimal
+        publicmarket: [Party]
+      controller owner, issuer
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Asset (issuer,symbol,issueid)
+        archive oldRegistrationCid
+        create Asset with
+         symbol= oldRegistrationData.symbol
+         issuer= oldRegistrationData.issuer
+         owner=oldRegistrationData.owner
+         price=oldRegistrationData.price
+         observers= publicmarket
+         display=True
+         sales=oldRegistrationData.sales
+         issueid=oldRegistrationData.issueid
+         description=oldRegistrationData.description
+         communitydisplayed=oldRegistrationData.communitydisplayed
+    nonconsuming choice Changewallets: ContractId User with
+        newwallet: Decimal
+        buyerusername:Party
+      controller username,buyerusername
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @User (buyerusername)
+        archive self
+        archive oldRegistrationCid
+        create this with wallet = wallet+newwallet
+        create User  with
+          username=oldRegistrationData.username
+          following=oldRegistrationData.following
+          nftids=oldRegistrationData.nftids
+          wallet= oldRegistrationData.wallet-newwallet
+    nonconsuming choice CreatePrivateCommunity: ContractId Community with
+        communityname: Text
+        password: Text
+      controller username
+      do
+      --  (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Community (communityname)
+    --    archive oldRegistrationCid
+        create Community with
+          name=communityname
+          following = [username] 
+          issuer=username
+          password=password
+    nonconsuming choice CreatePublicCommunity: ContractId Community with
+        communityname: Text
+        public:Party
+        password:Text
+      controller username,public
+      do
+      --  (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Community (communityname)
+    --    archive oldRegistrationCid
+        create Community with
+          name=communityname
+          following = [username] 
+          issuer=public
+          password=password
+    nonconsuming choice FollowCommunity: ContractId Community with
+        communityname: Text
+        issuer:Party
+        passwordentered:Text
+      controller username,issuer
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Community (issuer,communityname)
+        assertEq  (passwordentered )( oldRegistrationData.password ) 
+        archive oldRegistrationCid
+        create Community with
+          name=communityname
+          following = dedup(username :: oldRegistrationData.following)
+          issuer=oldRegistrationData.issuer
+          password=oldRegistrationData.password      
+        
+    nonconsuming choice RemoveFollowCommunity: ContractId Community with
+        communityname: Text
+        issuer:Party
+      controller username,issuer
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Community (issuer,communityname)
+        archive oldRegistrationCid
+        let followers=delete(username)(oldRegistrationData.following)
+        create Community with
+          name=communityname
+          following = followers
+          issuer=oldRegistrationData.issuer
+          password=oldRegistrationData.password
+    nonconsuming choice AddCommunityDisplay: ContractId Asset with
+        symbol : Text
+        owner: Party
+        issuer:Party
+        issueid: Decimal
+        communitytofollow: Text
+        publicmarket: [Party]
+      controller owner, issuer
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Asset (issuer,symbol,issueid)
+        archive oldRegistrationCid
+        create Asset with
+         symbol= oldRegistrationData.symbol
+         issuer= oldRegistrationData.issuer
+         owner=oldRegistrationData.owner
+         price=oldRegistrationData.price
+         observers= publicmarket
+         display=True
+         sales=oldRegistrationData.sales
+         issueid=oldRegistrationData.issueid
+         description=oldRegistrationData.description
+         communitydisplayed=dedup(communitytofollow :: oldRegistrationData.communitydisplayed)
+    nonconsuming choice RemoveCommunityDisplay: ContractId Asset with
+        symbol : Text
+        owner: Party
+        issuer:Party
+        issueid: Decimal
+        communitytofollow: Text
+        publicmarket: [Party]
+      controller owner, issuer
+      do
+        (oldRegistrationCid, oldRegistrationData) <- fetchByKey @Asset (issuer,symbol,issueid)
+        archive oldRegistrationCid
+        let followers=delete(communitytofollow)(oldRegistrationData.communitydisplayed)
+        create Asset with
+         symbol= oldRegistrationData.symbol
+         issuer= oldRegistrationData.issuer
+         owner=oldRegistrationData.owner
+         price=oldRegistrationData.price
+         observers= publicmarket
+         display=True
+         sales=oldRegistrationData.sales
+         issueid=oldRegistrationData.issueid
+         description=oldRegistrationData.description
+         communitydisplayed=followers
+--happy = script do
+--  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+--  bob <- allocatePartyWithHint "Bob" (PartyIdHint "Bob")
+--  james <- allocatePartyWithHint "James" (PartyIdHint "James")
+--
+--  aliceTV <- submit alice do
+--    createCmd  User with
+--      username  = alice
+--      following  = [alice]
+
+
+
+
+
+  --bobTV <- submit alice do
+  --  exerciseCmd aliceTV Mint with issuer = alice, symbol="TV"
+ 
+    -- FOLLOW_END
